@@ -2,6 +2,7 @@
 import argparse
 import time
 import cv2
+from datetime import datetime
 from depthv2 import DepthAnythingV2
 
 
@@ -26,6 +27,8 @@ def parse_args():
     parser.add_argument("--webcam", action="store_true", help="Use webcam as input.")
     parser.add_argument("--cam-id", type=int, default=0, help="Webcam device ID.")
     parser.add_argument("--save-video", type=str, help="Path to save output video.")
+    parser.add_argument("--screenshot-dir", type=str, default="./screenshots",
+                       help="Directory to save screenshots (default: ./screenshots).")
     parser.add_argument("--no-show", action="store_true", help="Don't display video window.")
     parser.add_argument("--flip", action="store_true", help="Flip webcam horizontally.")
     parser.add_argument("--side-by-side", action="store_true",
@@ -47,6 +50,33 @@ def get_colormap(name):
         "gray": cv2.COLORMAP_BONE,
     }
     return colormaps.get(name.lower(), cv2.COLORMAP_INFERNO)
+
+
+def save_screenshot(image, screenshot_dir="./screenshots"):
+    """
+    Save a screenshot with timestamp
+
+    Args:
+        image: Image to save
+        screenshot_dir: Directory to save screenshots
+
+    Returns:
+        str: Path to saved screenshot
+    """
+    import os
+
+    # Create directory if it doesn't exist
+    os.makedirs(screenshot_dir, exist_ok=True)
+
+    # Generate filename with timestamp
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"screenshot_{timestamp}.jpg"
+    filepath = os.path.join(screenshot_dir, filename)
+
+    # Save image
+    cv2.imwrite(filepath, image)
+
+    return filepath
 
 
 def run_image(args):
@@ -118,7 +148,7 @@ def run_webcam(args):
     print(f"Model: {args.model}")
     print(f"Input size: {args.height}x{args.width}")
     print(f"Colormap: {args.colormap}")
-    print("Press 'q' or ESC to exit.")
+    print("Press 's' to save screenshot, 'c' to change colormap, 'q' or ESC to exit.")
 
     # Video writer if saving
     writer = None
@@ -183,6 +213,10 @@ def run_webcam(args):
                 if key == ord('q') or key == 27:
                     print("Exit requested.")
                     break
+                # Save screenshot with 's' key
+                elif key == ord('s'):
+                    screenshot_path = save_screenshot(vis, args.screenshot_dir)
+                    print(f"\n📸 Screenshot saved: {screenshot_path}")
                 # Change colormap with 'c' key
                 elif key == ord('c'):
                     colormaps_list = [

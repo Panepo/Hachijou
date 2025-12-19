@@ -3,6 +3,7 @@ import argparse
 import time
 import cv2
 import numpy as np
+from datetime import datetime
 from yolov3 import YOLOv3ONNX
 from depthv2 import DepthAnythingV2
 
@@ -32,6 +33,8 @@ def parse_args():
     # Visualization settings
     parser.add_argument("--show-depth", action="store_true", help="Show depth map alongside detection.")
     parser.add_argument("--save-video", type=str, help="Path to save output video.")
+    parser.add_argument("--screenshot-dir", type=str, default="./screenshots",
+                       help="Directory to save screenshots (default: ./screenshots).")
     parser.add_argument("--no-show", action="store_true", help="Don't display video window.")
     parser.add_argument("--colormap", type=str, default="plasma",
                        choices=["inferno", "plasma", "viridis", "jet", "turbo"],
@@ -50,6 +53,33 @@ def get_colormap(name):
         "turbo": cv2.COLORMAP_TURBO,
     }
     return colormaps.get(name.lower(), cv2.COLORMAP_PLASMA)
+
+
+def save_screenshot(image, screenshot_dir="./screenshots"):
+    """
+    Save a screenshot with timestamp
+
+    Args:
+        image: Image to save
+        screenshot_dir: Directory to save screenshots
+
+    Returns:
+        str: Path to saved screenshot
+    """
+    import os
+
+    # Create directory if it doesn't exist
+    os.makedirs(screenshot_dir, exist_ok=True)
+
+    # Generate filename with timestamp
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"screenshot_{timestamp}.jpg"
+    filepath = os.path.join(screenshot_dir, filename)
+
+    # Save image
+    cv2.imwrite(filepath, image)
+
+    return filepath
 
 
 def get_person_depth(detection, depth_map):
@@ -226,7 +256,7 @@ def run_webcam(args, yolo, depth_estimator, colormap):
     fps_read = cap.get(cv2.CAP_PROP_FPS) or 30.0
 
     print(f"Webcam opened: {width}x{height} @ ~{fps_read:.1f} FPS")
-    print("Press 'q' or ESC to exit.")
+    print("Press 's' to save screenshot, 'q' or ESC to exit.")
 
     # Video writer if saving
     writer = None
@@ -293,6 +323,10 @@ def run_webcam(args, yolo, depth_estimator, colormap):
                 if key == ord('q') or key == 27:
                     print("Exit requested.")
                     break
+                # Save screenshot with 's' key
+                elif key == ord('s'):
+                    screenshot_path = save_screenshot(output, args.screenshot_dir)
+                    print(f"\n📸 Screenshot saved: {screenshot_path}")
 
             # Save video frame
             if writer is not None:

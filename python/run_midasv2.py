@@ -4,6 +4,7 @@ import argparse
 import time
 import cv2
 import numpy as np
+from datetime import datetime
 from midasv2 import MiDaSv2ONNX
 
 def parse_args():
@@ -34,6 +35,8 @@ def parse_args():
                        help="Webcam device ID (0 is default camera).")
     parser.add_argument("--save-video", type=str,
                        help="Path to save output video.")
+    parser.add_argument("--screenshot-dir", type=str, default="./screenshots",
+                       help="Directory to save screenshots (default: ./screenshots).")
     parser.add_argument("--no-show", action="store_true",
                        help="Don't display video window.")
     parser.add_argument("--flip", action="store_true",
@@ -57,6 +60,32 @@ def get_colormap(name):
         'cool': cv2.COLORMAP_COOL
     }
     return colormaps.get(name.lower(), cv2.COLORMAP_INFERNO)
+
+def save_screenshot(image, screenshot_dir="./screenshots"):
+    """
+    Save a screenshot with timestamp
+
+    Args:
+        image: Image to save
+        screenshot_dir: Directory to save screenshots
+
+    Returns:
+        str: Path to saved screenshot
+    """
+    import os
+
+    # Create directory if it doesn't exist
+    os.makedirs(screenshot_dir, exist_ok=True)
+
+    # Generate filename with timestamp
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"screenshot_{timestamp}.jpg"
+    filepath = os.path.join(screenshot_dir, filename)
+
+    # Save image
+    cv2.imwrite(filepath, image)
+
+    return filepath
 
 def run_image(args):
     """Run MiDaS depth estimation on a single image"""
@@ -122,7 +151,7 @@ def run_webcam(args):
     print(f"Input size: {args.height}x{args.width}")
     print(f"Colormap: {args.colormap}")
     print(f"View mode: {args.view_mode}")
-    print("Press 'q' or ESC to exit, 'c' to cycle colormaps, 'v' to cycle view modes.")
+    print("Press 's' to save screenshot, 'c' to cycle colormaps, 'v' to cycle view modes, 'q' or ESC to exit.")
 
     # Video writer if saving
     writer = None
@@ -159,12 +188,12 @@ def run_webcam(args):
 
     # Mouse hover tracking
     mouse_x, mouse_y = -1, -1
-    
+
     def mouse_callback(event, x, y, flags, param):
         nonlocal mouse_x, mouse_y
         if event == cv2.EVENT_MOUSEMOVE:
             mouse_x, mouse_y = x, y
-    
+
     # Set mouse callback
     if not args.no_show:
         cv2.namedWindow("MiDaS v2 Depth Estimation")
@@ -217,7 +246,7 @@ def run_webcam(args):
                 # Determine actual depth map coordinates based on view mode
                 current_view_mode = view_modes[view_mode_idx]
                 depth_x, depth_y = mouse_x, mouse_y
-                
+
                 if current_view_mode == 'combined':
                     # In combined view, depth is on the right half
                     if mouse_x >= width:
@@ -226,38 +255,38 @@ def run_webcam(args):
                         # Mouse is on original image side
                         depth_x = mouse_x
                         depth_y = mouse_y
-                
+
                 # Ensure coordinates are within bounds
                 if 0 <= depth_x < depth_map.shape[1] and 0 <= depth_y < depth_map.shape[0]:
                     depth_value = depth_map[depth_y, depth_x]
-                    
+
                     # Draw crosshair at mouse position
-                    cv2.drawMarker(vis, (mouse_x, mouse_y), (0, 255, 0), 
+                    cv2.drawMarker(vis, (mouse_x, mouse_y), (0, 255, 0),
                                  cv2.MARKER_CROSS, 20, 2)
-                    
+
                     # Draw depth value tooltip
                     tooltip = f"Depth: {depth_value:.2f}"
                     (tw, th), _ = cv2.getTextSize(tooltip, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
-                    
+
                     # Position tooltip near mouse, adjust if near edges
                     tooltip_x = mouse_x + 15
                     tooltip_y = mouse_y - 10
-                    
+
                     if tooltip_x + tw > vis.shape[1]:
                         tooltip_x = mouse_x - tw - 15
                     if tooltip_y - th < 0:
                         tooltip_y = mouse_y + 30
-                    
+
                     # Draw tooltip background
-                    cv2.rectangle(vis, 
+                    cv2.rectangle(vis,
                                 (tooltip_x - 5, tooltip_y - th - 5),
                                 (tooltip_x + tw + 5, tooltip_y + 5),
                                 (0, 0, 0), -1)
-                    cv2.rectangle(vis, 
+                    cv2.rectangle(vis,
                                 (tooltip_x - 5, tooltip_y - th - 5),
                                 (tooltip_x + tw + 5, tooltip_y + 5),
                                 (0, 255, 0), 2)
-                    
+
                     # Draw tooltip text
                     cv2.putText(vis, tooltip, (tooltip_x, tooltip_y),
                               cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2, cv2.LINE_AA)
@@ -270,6 +299,9 @@ def run_webcam(args):
                 if key == ord('q') or key == 27:  # q or ESC
                     print("Exit requested.")
                     break
+                elif key == ord('s'):  # Save screenshot
+                    screenshot_path = save_screenshot(vis, args.screenshot_dir)
+                    print(f"\n📸 Screenshot saved: {screenshot_path}")
                 elif key == ord('c'):  # Cycle colormaps
                     colormap_idx = (colormap_idx + 1) % len(colormaps)
                     print(f"Colormap changed to: {colormaps[colormap_idx]}")

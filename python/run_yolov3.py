@@ -4,6 +4,8 @@ import argparse
 import time
 import cv2
 import numpy as np
+import os
+from datetime import datetime
 from yolov3 import YOLOv3ONNX
 
 def parse_args():
@@ -24,6 +26,8 @@ def parse_args():
     parser.add_argument("--webcam", action="store_true", help="Use webcam as input.")
     parser.add_argument("--cam-id", type=int, default=0, help="Webcam device ID (0 is default camera).")
     parser.add_argument("--save-video", type=str, help="Path to save output video.")
+    parser.add_argument("--screenshot-dir", type=str, default="./screenshots",
+                       help="Directory to save screenshots (default: ./screenshots).")
     parser.add_argument("--no-show", action="store_true", help="Don't display video window.")
     parser.add_argument("--flip", action="store_true", help="Flip webcam horizontally.")
 
@@ -61,6 +65,15 @@ def run_image(args):
         class_name = yolo.class_names[int(class_id)]
         print(f"  {i+1}. {class_name}: {conf:.3f} at [{x1:.0f}, {y1:.0f}, {x2:.0f}, {y2:.0f}]")
 
+def save_screenshot(frame, screenshot_dir):
+    """Save a screenshot with timestamp to the specified directory"""
+    os.makedirs(screenshot_dir, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"screenshot_{timestamp}.jpg"
+    filepath = os.path.join(screenshot_dir, filename)
+    cv2.imwrite(filepath, frame)
+    return filepath
+
 def run_webcam(args):
     """Run YOLOv3 detection on webcam stream"""
     # Initialize detector
@@ -86,7 +99,7 @@ def run_webcam(args):
     print(f"Input size: {args.height}x{args.width}")
     print(f"Confidence threshold: {args.conf}")
     print(f"NMS threshold: {args.nms}")
-    print("Press 'q' or ESC to exit.")
+    print("Press 's' to save screenshot, 'q' or ESC to exit.")
 
     # Video writer if saving
     writer = None
@@ -139,6 +152,10 @@ def run_webcam(args):
                 if key == ord('q') or key == 27:
                     print("Exit requested.")
                     break
+                # Save screenshot with 's' key
+                elif key == ord('s'):
+                    screenshot_path = save_screenshot(vis, args.screenshot_dir)
+                    print(f"\n📸 Screenshot saved: {screenshot_path}")
 
             # Save video frame
             if writer is not None:
