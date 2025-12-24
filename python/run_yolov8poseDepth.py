@@ -196,8 +196,13 @@ def detect_occlusion(keypoints, kpt_threshold=0.5):
     is_occluded = False
     occlusion_type = 'none'
 
+    # Generally too few keypoints
+    if num_visible < 10:
+        is_occluded = True
+        occlusion_type = 'partial'
+
     # Missing lower body keypoints (e.g., sitting, behind desk)
-    if visible_lower < 4 and visible_upper >= 3:
+    elif visible_lower < 4 and visible_upper >= 3:
         is_occluded = True
         occlusion_type = 'lower_body'
 
@@ -205,11 +210,6 @@ def detect_occlusion(keypoints, kpt_threshold=0.5):
     elif visible_upper < 5 and visible_lower >= 2:
         is_occluded = True
         occlusion_type = 'upper_body'
-
-    # Generally too few keypoints
-    #elif num_visible < 8:
-    #    is_occluded = True
-    #    occlusion_type = 'partial'
 
     return {
         'is_occluded': is_occluded,
@@ -252,7 +252,19 @@ def calculate_distance_from_bbox(bbox, person_height_cm, focal_length, occlusion
     # Adjust person height based on occlusion
     effective_height = person_height_cm
     if occlusion_info is not None:
-        if occlusion_info['occlusion_type'] == 'lower_body':
+        # Check if bounding box is near square (aspect ratio close to 1)
+        bbox_width = x2 - x1
+        bbox_height = y2 - y1
+        aspect_ratio = bbox_width / bbox_height if bbox_height > 0 else 0
+        is_near_square = 0.8 <= aspect_ratio <= 1.2
+
+        if is_near_square and occlusion_info['occlusion_type'] == 'partial':
+            # Near square bbox with partial occlusion suggests seated/crouched position
+            effective_height = person_height_cm / 3
+        elif occlusion_info['occlusion_type'] == 'partial':
+            # General partial occlusion, use three-quarters height
+            effective_height = person_height_cm / 2.5
+        elif occlusion_info['occlusion_type'] == 'lower_body':
             # Only upper body visible, use half height
             effective_height = person_height_cm / 2.0
         elif occlusion_info['occlusion_type'] == 'upper_body':
