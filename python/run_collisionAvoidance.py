@@ -17,6 +17,11 @@ def parse_args():
     parser.add_argument("--model", type=str,
                        default="./models/depth_anything_v2_vits.onnx",
                        help="Path to depth estimation ONNX model (default: ./models/depth_anything_v2_vits.onnx)")
+    parser.add_argument("--mask2former", type=str,
+                       default="./models/Mask2Former.onnx",
+                       help="Path to Mask2Former ONNX model for floor detection (default: ./models/Mask2Former.onnx)")
+    parser.add_argument("--no-floor-detection", action="store_true",
+                       help="Disable floor detection (floor will be included in collision detection)")
     parser.add_argument("--input-size", type=int, nargs=2, default=[518, 518],
                        help="Model input size (height width, default: 518 518)")
 
@@ -113,12 +118,28 @@ def main():
     print(f"Motion Threshold: {args.motion_threshold}")
     print(f"Flow Method: {args.flow_method}")
 
+    # Check if Mask2Former model exists
+    mask2former_path = None
+    use_floor_detection = not args.no_floor_detection
+    if use_floor_detection:
+        if os.path.exists(args.mask2former):
+            mask2former_path = args.mask2former
+            print(f"Floor Detection: ENABLED (Mask2Former: {args.mask2former})")
+        else:
+            print(f"Warning: Mask2Former model not found: {args.mask2former}")
+            print("Floor detection disabled. Floor will be included in collision detection.")
+            use_floor_detection = False
+    else:
+        print("Floor Detection: DISABLED (floor will be included in collision detection)")
+
     collision_system = CollisionAvoidance(
         depth_model_path=args.model,
+        mask2former_model_path=mask2former_path,
         collision_threshold=args.collision_threshold,
         motion_threshold=args.motion_threshold,
         flow_method=args.flow_method,
-        input_size=tuple(args.input_size)
+        input_size=tuple(args.input_size),
+        use_floor_detection=use_floor_detection
     )
 
     # Setup video writer if save path is provided

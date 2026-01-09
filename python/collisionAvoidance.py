@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 from slam import CameraMotionDetector
 from depthv2 import DepthAnythingV2
+from mask2former import Mask2FormerONNX
 
 
 class CollisionAvoidance:
@@ -14,19 +15,23 @@ class CollisionAvoidance:
 
     def __init__(self,
                  depth_model_path,
+                 mask2former_model_path=None,
                  collision_threshold=3.0,
                  motion_threshold=1.0,
                  flow_method='lucas-kanade',
-                 input_size=(518, 518)):
+                 input_size=(518, 518),
+                 use_floor_detection=True):
         """
         Initialize collision avoidance system.
 
         Args:
             depth_model_path (str): Path to depth estimation ONNX model
+            mask2former_model_path (str): Path to Mask2Former ONNX model for floor detection (optional)
             collision_threshold (float): Depth threshold for collision warning (default: 3.0)
             motion_threshold (float): Motion detection threshold (default: 1.0)
             flow_method (str): Optical flow method - 'farneback' or 'lucas-kanade'
             input_size (tuple): Depth model input size
+            use_floor_detection (bool): Whether to use floor detection to exclude floor from collision detection
         """
         # Initialize motion detector (SLAM)
         self.motion_detector = CameraMotionDetector(
@@ -40,9 +45,23 @@ class CollisionAvoidance:
             input_size=input_size
         )
 
+        # Initialize floor detector (Mask2Former)
+        self.use_floor_detection = use_floor_detection and mask2former_model_path is not None
+        self.floor_detector = None
+        if self.use_floor_detection:
+            self.floor_detector = Mask2FormerONNX(
+                model_path=mask2former_model_path,
+                conf_threshold=0.5,
+                input_size=(384, 384)
+            )
+            # Floor class IDs in COCO-Stuff 134: 'floor-wood' (87), 'floor-other-merged' (122)
+            self.floor_class_ids = [87, 122]  # floor-wood, floor-other-merged
+            print(f"Floor detection enabled. Floor classes: {self.floor_class_ids}")
+
         self.collision_threshold = collision_threshold
         self.is_camera_moving = False
         self.current_depth_map = None
+        self.current_floor_mask = None
 
         # Statistics
         self.frames_processed = 0
@@ -63,6 +82,35 @@ class CollisionAvoidance:
 
         return is_moving, avg_motion, max_motion, vis_frame
 
+    def detect_floor(self, frame):
+        """
+        Detect floor pixels using Mask2Former segmentation.
+
+        Args:
+            frame: Input video frame
+
+        Returns:
+            numpy.ndarray: Binary mask where True indicates floor pixels
+        """
+        if not self.use_floor_detection or self.floor_detector is None:
+            return None
+
+        # Run segmentation
+        input_tensor, orig_h, orig_w = self.floor_detector.preprocess(frame)
+        outputs = self.floor_detector.session.run(
+            self.floor_detector.output_names,
+            {self.floor_detector.input_names[0]: input_tensor}
+        )
+        seg_map = self.floor_detector.postprocess(outputs, orig_h, orig_w)
+
+        # Create binary mask for floor pixels
+        floor_mask = np.zeros(seg_map.shape, dtype=bool)
+        for floor_class_id in self.floor_class_ids:
+            floor_mask |= (seg_map == floor_class_id)
+
+        self.current_floor_mask = floor_mask
+        return floor_mask
+
     def estimate_depth(self, frame):
         """
         Estimate depth map for the current frame.
@@ -78,12 +126,14 @@ class CollisionAvoidance:
 
         return depth_map, colored_depth
 
-    def detect_collision_risk(self, depth_map):
+    def detect_collision_risk(self, depth_map, floor_mask=None):
         """
         Detect areas where objects are too close (depth > threshold).
+        Excludes floor pixels if floor_mask is provided.
 
         Args:
             depth_map: Depth map from depth estimation
+            floor_mask: Binary mask indicating floor pixels to exclude (optional)
 
         Returns:
             tuple: (collision_mask, has_collision, collision_percentage)
@@ -91,6 +141,21 @@ class CollisionAvoidance:
         # Create binary mask for collision areas where depth > threshold
         # Higher depth values indicate closer objects in this depth model
         collision_mask = depth_map > self.collision_threshold
+
+        # Exclude floor pixels from collision detection
+        if floor_mask is not None:
+            # Resize floor mask to match depth map if needed
+            if floor_mask.shape != collision_mask.shape:
+                floor_mask_resized = cv2.resize(
+                    floor_mask.astype(np.uint8),
+                    (collision_mask.shape[1], collision_mask.shape[0]),
+                    interpolation=cv2.INTER_NEAREST
+                ).astype(bool)
+            else:
+                floor_mask_resized = floor_mask
+
+            # Remove floor pixels from collision mask
+            collision_mask = collision_mask & ~floor_mask_resized
 
         # Calculate collision statistics
         total_pixels = collision_mask.size
@@ -190,6 +255,13 @@ class CollisionAvoidance:
                    (10, status_y + line_height * 4),
                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1, cv2.LINE_AA)
 
+        # Floor detection status
+        if self.use_floor_detection:
+            floor_status = "ON" if self.current_floor_mask is not None else "ENABLED"
+            cv2.putText(visualization, f"Floor Detection: {floor_status}",
+                       (10, status_y + line_height * 5),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1, cv2.LINE_AA)
+
         return visualization
 
     def process_frame(self, frame):
@@ -213,11 +285,16 @@ class CollisionAvoidance:
 
         # Step 2: If camera is moving, estimate depth
         if is_moving:
+            # Detect floor (if enabled)
+            floor_mask = None
+            if self.use_floor_detection:
+                floor_mask = self.detect_floor(frame)
+
             # Estimate depth
             depth_map, depth_colored = self.estimate_depth(frame)
 
-            # Step 3: Detect collision risk
-            collision_mask, has_collision, collision_percentage = self.detect_collision_risk(depth_map)
+            # Step 3: Detect collision risk (excluding floor)
+            collision_mask, has_collision, collision_percentage = self.detect_collision_risk(depth_map, floor_mask)
 
             # Track collision warnings
             if has_collision:
