@@ -108,11 +108,15 @@ def run_image(args):
     infer_time = (time.time() - t0) * 1000.0
 
     # Save results
-    cv2.imwrite(args.output, combined)
-    print(f"Saved combined view to {args.output}")
+    import os
+    os.makedirs("./output", exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_path = f"./output/{timestamp}.jpg"
+    cv2.imwrite(output_path, combined)
+    print(f"Saved combined view to {output_path}")
 
     # Save depth colored separately
-    depth_only_path = args.output.replace('.jpg', '_depth.jpg').replace('.png', '_depth.png')
+    depth_only_path = f"./output/{timestamp}_depth.jpg"
     cv2.imwrite(depth_only_path, depth_colored)
     print(f"Saved depth visualization to {depth_only_path}")
 

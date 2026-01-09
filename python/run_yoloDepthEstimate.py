@@ -358,9 +358,13 @@ def run_image(args, yolo, depth_estimator, colormap, focal_length):
             print(f"  Person {i}: Distance = N/A, Depth = {person['depth']:.2f}, Confidence = {person['confidence']:.2f}")
 
     # Save result
-    cv2.imwrite(args.output, output)
+    import os
+    os.makedirs("./output", exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_path = f"./output/{timestamp}.jpg"
+    cv2.imwrite(output_path, output)
 
-    print(f"\nSaved result to {args.output}")
+    print(f"\nSaved result to {output_path}")
     print(f"YOLOv3 time: {yolo_time:.1f}ms")
     print(f"Depth time: {depth_time:.1f}ms")
     print(f"Total time: {total_time:.1f}ms")

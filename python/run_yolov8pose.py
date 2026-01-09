@@ -86,7 +86,10 @@ def run_image(args):
     infer_time = (time.time() - t0) * 1000.0
 
     # Save result
-    cv2.imwrite(args.output, result)
+    os.makedirs("./output", exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_path = f"./output/{timestamp}.jpg"
+    cv2.imwrite(output_path, result)
 
     # Print results
     print(f"\n{'='*60}")

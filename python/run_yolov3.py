@@ -55,8 +55,11 @@ def run_image(args):
     infer_time = (time.time() - t0) * 1000.0
 
     # Save result
-    cv2.imwrite(args.output, result)
-    print(f"Saved detections to {args.output}")
+    os.makedirs("./output", exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_path = f"./output/{timestamp}.jpg"
+    cv2.imwrite(output_path, result)
+    print(f"Saved detections to {output_path}")
     print(f"Inference time: {infer_time:.1f}ms")
     print(f"Found {len(detections)} objects:")
 

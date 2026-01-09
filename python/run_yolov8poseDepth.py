@@ -155,6 +155,159 @@ def is_bbox_on_border(bbox, frame_shape, border_threshold=50):
     }
 
 
+def detect_standing_posture(keypoints, kpt_threshold=0.5):
+    """
+    Detect if person is in standing posture based on body keypoint alignment
+
+    COCO keypoint indices:
+    0: nose, 1-2: eyes, 3-4: ears, 5-6: shoulders, 7-8: elbows, 9-10: wrists
+    11-12: hips, 13-14: knees, 15-16: ankles
+
+    Args:
+        keypoints: List of 17 keypoints [[x, y, conf], ...]
+        kpt_threshold: Keypoint confidence threshold
+
+    Returns:
+        dict: Standing posture analysis with keys:
+            - is_standing: bool
+            - confidence: float (0-1, how confident we are in the classification)
+            - reason: str (explanation)
+            - vertical_alignment: float (0-1, how vertical the body is)
+    """
+    # Get key body points
+    left_shoulder = keypoints[5] if len(keypoints) > 5 else [0, 0, 0]
+    right_shoulder = keypoints[6] if len(keypoints) > 6 else [0, 0, 0]
+    left_hip = keypoints[11] if len(keypoints) > 11 else [0, 0, 0]
+    right_hip = keypoints[12] if len(keypoints) > 12 else [0, 0, 0]
+    left_knee = keypoints[13] if len(keypoints) > 13 else [0, 0, 0]
+    right_knee = keypoints[14] if len(keypoints) > 14 else [0, 0, 0]
+    left_ankle = keypoints[15] if len(keypoints) > 15 else [0, 0, 0]
+    right_ankle = keypoints[16] if len(keypoints) > 16 else [0, 0, 0]
+
+    # Check visibility of critical joints
+    shoulder_visible = (left_shoulder[2] > kpt_threshold or right_shoulder[2] > kpt_threshold)
+    hip_visible = (left_hip[2] > kpt_threshold or right_hip[2] > kpt_threshold)
+    knee_visible = (left_knee[2] > kpt_threshold or right_knee[2] > kpt_threshold)
+    ankle_visible = (left_ankle[2] > kpt_threshold or right_ankle[2] > kpt_threshold)
+
+    # Can't determine if critical points are missing
+    if not (shoulder_visible and hip_visible):
+        return {
+            'is_standing': False,
+            'confidence': 0.0,
+            'reason': 'insufficient_keypoints',
+            'vertical_alignment': 0.0
+        }
+
+    # Calculate average positions for each body part
+    shoulder_y = (left_shoulder[1] if left_shoulder[2] > kpt_threshold else 0) + \
+                 (right_shoulder[1] if right_shoulder[2] > kpt_threshold else 0)
+    shoulder_count = (1 if left_shoulder[2] > kpt_threshold else 0) + \
+                     (1 if right_shoulder[2] > kpt_threshold else 0)
+    shoulder_y /= max(shoulder_count, 1)
+
+    hip_y = (left_hip[1] if left_hip[2] > kpt_threshold else 0) + \
+            (right_hip[1] if right_hip[2] > kpt_threshold else 0)
+    hip_count = (1 if left_hip[2] > kpt_threshold else 0) + \
+                (1 if right_hip[2] > kpt_threshold else 0)
+    hip_y /= max(hip_count, 1)
+
+    knee_y = (left_knee[1] if left_knee[2] > kpt_threshold else 0) + \
+             (right_knee[1] if right_knee[2] > kpt_threshold else 0)
+    knee_count = (1 if left_knee[2] > kpt_threshold else 0) + \
+                 (1 if right_knee[2] > kpt_threshold else 0)
+    knee_y /= max(knee_count, 1) if knee_count > 0 else 1
+
+    ankle_y = (left_ankle[1] if left_ankle[2] > kpt_threshold else 0) + \
+              (right_ankle[1] if right_ankle[2] > kpt_threshold else 0)
+    ankle_count = (1 if left_ankle[2] > kpt_threshold else 0) + \
+                  (1 if right_ankle[2] > kpt_threshold else 0)
+    ankle_y /= max(ankle_count, 1) if ankle_count > 0 else 1
+
+    # Calculate torso height (shoulder to hip)
+    torso_height = abs(hip_y - shoulder_y)
+
+    # Calculate vertical alignment metrics
+    vertical_alignment = 0.0
+
+    if knee_visible and ankle_visible and torso_height > 0:
+        # Full body visible - check vertical progression
+        # In standing: shoulder -> hip -> knee -> ankle should progress downward
+        hip_knee_height = abs(knee_y - hip_y)
+        knee_ankle_height = abs(ankle_y - knee_y)
+
+        # Check if body segments progress vertically (Y increases going down)
+        shoulder_to_hip_ok = hip_y > shoulder_y  # hip below shoulder
+        hip_to_knee_ok = knee_y > hip_y  # knee below hip
+        knee_to_ankle_ok = ankle_y > knee_y  # ankle below knee
+
+        # Standing person has roughly proportional body segments
+        # Torso ~ 40%, Upper leg ~ 25%, Lower leg ~ 25% of body height
+        total_height = ankle_y - shoulder_y
+
+        if total_height > 0:
+            torso_ratio = torso_height / total_height
+            leg_ratio = (hip_knee_height + knee_ankle_height) / total_height
+
+            # Standing: torso is roughly 35-50% of total height
+            # Legs (hip to ankle) are roughly 50-65% of total height
+            is_proportional = (0.30 < torso_ratio < 0.55) and (0.45 < leg_ratio < 0.70)
+
+            # Calculate vertical alignment score
+            alignment_checks = [shoulder_to_hip_ok, hip_to_knee_ok, knee_to_ankle_ok, is_proportional]
+            vertical_alignment = sum(alignment_checks) / len(alignment_checks)
+
+            # Strong standing indicators
+            if vertical_alignment >= 0.80:
+                return {
+                    'is_standing': True,
+                    'confidence': vertical_alignment,
+                    'reason': 'vertical_full_body',
+                    'vertical_alignment': vertical_alignment
+                }
+            else:
+                return {
+                    'is_standing': False,
+                    'confidence': 1.0 - vertical_alignment,
+                    'reason': 'sitting_or_lying',
+                    'vertical_alignment': vertical_alignment
+                }
+
+    elif knee_visible and torso_height > 0:
+        # Knees visible but not ankles
+        hip_knee_height = abs(knee_y - hip_y)
+
+        shoulder_to_hip_ok = hip_y > shoulder_y
+        hip_to_knee_ok = knee_y > hip_y
+
+        # Check proportions
+        upper_body_height = knee_y - shoulder_y
+        if upper_body_height > 0:
+            torso_ratio = torso_height / upper_body_height
+
+            # Standing: torso should be about 40-60% of visible height (shoulder to knee)
+            is_proportional = 0.35 < torso_ratio < 0.65
+
+            alignment_checks = [shoulder_to_hip_ok, hip_to_knee_ok, is_proportional]
+            vertical_alignment = sum(alignment_checks) / len(alignment_checks)
+
+            if vertical_alignment >= 0.66:
+                return {
+                    'is_standing': True,
+                    'confidence': vertical_alignment * 0.8,  # Lower confidence without ankles
+                    'reason': 'vertical_upper_body',
+                    'vertical_alignment': vertical_alignment
+                }
+
+    # Default to not standing if we can't determine
+    return {
+        'is_standing': False,
+        'confidence': 0.6,
+        'reason': 'unclear_posture',
+        'vertical_alignment': vertical_alignment
+    }
+
+
 def detect_occlusion(keypoints, kpt_threshold=0.5):
     """
     Detect if person is occluded based on missing keypoints
@@ -221,20 +374,23 @@ def detect_occlusion(keypoints, kpt_threshold=0.5):
     }
 
 
-def calculate_distance_from_bbox(bbox, person_height_cm, focal_length, occlusion_info=None):
+def calculate_distance_from_bbox(bbox, person_height_cm, focal_length, occlusion_info=None, posture_info=None):
     """
     Calculate distance using bounding box height
     Distance = (Real Height × Focal Length) / Pixel Height
 
-    Adjusts person height based on occlusion:
+    Adjusts person height based on posture and occlusion:
+    - If standing: use full height (person_height_cm)
+    - If not standing (sitting/lying): use fixed reduced height
     - If lower body occluded: use half height (upper body only)
     - If upper body occluded: use half height (lower body only)
 
     Args:
         bbox: Bounding box [x1, y1, x2, y2]
-        person_height_cm: Actual person height in cm
+        person_height_cm: Actual person height in cm (when standing)
         focal_length: Camera focal length in pixels
         occlusion_info: Occlusion detection dict (optional)
+        posture_info: Posture detection dict (optional)
 
     Returns:
         float: Estimated distance in cm, or None if calculation fails
@@ -249,9 +405,20 @@ def calculate_distance_from_bbox(bbox, person_height_cm, focal_length, occlusion
     if pixel_height <= 0:
         return None
 
-    # Adjust person height based on occlusion
+    # Adjust person height based on posture and occlusion
     effective_height = person_height_cm
-    if occlusion_info is not None:
+    height_source = "full_standing"
+
+    # First check posture (takes priority over occlusion heuristics)
+    if posture_info is not None and posture_info['confidence'] > 0.5:
+        if not posture_info['is_standing']:
+            # Person is sitting or lying down - use fixed reduced height
+            # Typical sitting height is about 55-65% of standing height
+            effective_height = person_height_cm * 0.60
+            height_source = "sitting_fixed"
+
+    # If no clear posture detected, fall back to occlusion heuristics
+    elif occlusion_info is not None:
         # Check if bounding box is near square (aspect ratio close to 1)
         bbox_width = x2 - x1
         bbox_height = y2 - y1
@@ -261,18 +428,22 @@ def calculate_distance_from_bbox(bbox, person_height_cm, focal_length, occlusion
         if is_near_square and occlusion_info['occlusion_type'] == 'partial':
             # Near square bbox with partial occlusion suggests seated/crouched position
             effective_height = person_height_cm / 3
+            height_source = "crouched"
         elif occlusion_info['occlusion_type'] == 'partial':
             # General partial occlusion, use three-quarters height
             effective_height = person_height_cm / 2.5
+            height_source = "partial_occluded"
         elif occlusion_info['occlusion_type'] == 'lower_body':
             # Only upper body visible, use half height
             effective_height = person_height_cm / 2.0
+            height_source = "upper_body_only"
         elif occlusion_info['occlusion_type'] == 'upper_body':
             # Only lower body visible, use half height
             effective_height = person_height_cm / 2.0
+            height_source = "lower_body_only"
 
     distance = (effective_height * focal_length) / pixel_height
-    return distance
+    return distance, effective_height, height_source
 
 
 def calibrate_focal_length(bbox, person_height_cm, known_distance_cm):
@@ -299,17 +470,21 @@ def calibrate_focal_length(bbox, person_height_cm, known_distance_cm):
     return focal_length
 
 
-def draw_person_with_info(image, detection, distance_cm, occlusion_info, border_info,
+def draw_person_with_info(image, detection, distance_cm, effective_height, height_source,
+                          occlusion_info, posture_info, border_info,
                           pose_detector, draw_keypoints=True, draw_skeleton=True,
                           kpt_threshold=0.5):
     """
-    Draw person with pose, distance, and occlusion information
+    Draw person with pose, distance, posture, and occlusion information
 
     Args:
         image: Image to draw on
         detection: Detection dict from YOLOv8-Pose
         distance_cm: Calculated distance in cm
+        effective_height: Effective height used for calculation in cm
+        height_source: Source of height estimation
         occlusion_info: Occlusion analysis dict
+        posture_info: Posture detection dict
         border_info: Border detection dict
         pose_detector: YOLOv8PoseONNX instance
         draw_keypoints: Whether to draw keypoints
@@ -332,6 +507,8 @@ def draw_person_with_info(image, detection, distance_cm, occlusion_info, border_
         box_color = (0, 100, 255)  # Orange-red for very close (on border)
     elif occlusion_info['is_occluded']:
         box_color = (0, 165, 255)  # Orange for occluded
+    elif posture_info and not posture_info['is_standing'] and posture_info['confidence'] > 0.5:
+        box_color = (255, 165, 0)  # Blue for sitting/lying
     else:
         box_color = (0, 255, 0)  # Green for clear view
 
@@ -371,12 +548,25 @@ def draw_person_with_info(image, detection, distance_cm, occlusion_info, border_
     labels.append(f"Person: {confidence:.2f}")
     labels.append(f"Keypoints: {occlusion_info['visible_keypoints']}/17")
 
+    # Add posture information
+    if posture_info and posture_info['confidence'] > 0.3:
+        if posture_info['is_standing']:
+            labels.append(f"Standing ({posture_info['confidence']:.0%})")
+        else:
+            posture_label = "Sitting" if posture_info['reason'] == 'sitting_or_lying' else "Not Standing"
+            labels.append(f"{posture_label} ({posture_info['confidence']:.0%})")
+
     if distance_cm is not None:
         if distance_cm >= 100:
             dist_str = f"{distance_cm / 100:.2f}m"
         else:
             dist_str = f"{distance_cm:.0f}cm"
-        labels.append(f"Distance: {dist_str}")
+
+        # Show effective height if different from full height
+        if height_source == "sitting_fixed":
+            labels.append(f"Dist: {dist_str} (h={effective_height:.0f}cm)")
+        else:
+            labels.append(f"Distance: {dist_str}")
     else:
         labels.append("Distance: N/A")
 
@@ -440,10 +630,18 @@ def process_frame(frame, pose_detector, person_height_cm,
         # Detect occlusion
         occlusion_info = detect_occlusion(keypoints, kpt_threshold)
 
-        # Calculate distance with adjusted person height based on occlusion
-        distance_cm = calculate_distance_from_bbox(
-            bbox, person_height_cm, focal_length, occlusion_info
+        # Detect standing posture
+        posture_info = detect_standing_posture(keypoints, kpt_threshold)
+
+        # Calculate distance with adjusted person height based on posture and occlusion
+        result = calculate_distance_from_bbox(
+            bbox, person_height_cm, focal_length, occlusion_info, posture_info
         )
+
+        if result is not None:
+            distance_cm, effective_height, height_source = result
+        else:
+            distance_cm, effective_height, height_source = None, person_height_cm, "unknown"
 
         # Adjust distance based on conditions
         adjusted_distance_cm = distance_cm
@@ -461,7 +659,8 @@ def process_frame(frame, pose_detector, person_height_cm,
 
         # Draw person with info
         output = draw_person_with_info(
-            output, detection, adjusted_distance_cm, occlusion_info, border_info,
+            output, detection, adjusted_distance_cm, effective_height, height_source,
+            occlusion_info, posture_info, border_info,
             pose_detector, draw_keypoints, draw_skeleton, kpt_threshold
         )
 
@@ -471,8 +670,11 @@ def process_frame(frame, pose_detector, person_height_cm,
             'keypoints': keypoints,
             'distance_cm': distance_cm,
             'adjusted_distance_cm': adjusted_distance_cm,
+            'effective_height': effective_height,
+            'height_source': height_source,
             'confidence': detection['confidence'],
             'occlusion': occlusion_info,
+            'posture': posture_info,
             'border': border_info,
             'bbox_height': bbox[3] - bbox[1]
         })
@@ -513,14 +715,23 @@ def run_image(args, pose_detector, focal_length):
         print(f"  Confidence: {person['confidence']:.3f}")
         print(f"  Visible keypoints: {person['occlusion']['visible_keypoints']}/17")
 
+        # Display posture information
+        if person['posture']['confidence'] > 0.3:
+            posture_status = "Standing" if person['posture']['is_standing'] else "Sitting/Lying"
+            print(f"  Posture: {posture_status} (confidence: {person['posture']['confidence']:.1%})")
+            if person['posture']['vertical_alignment'] > 0:
+                print(f"    - Vertical alignment: {person['posture']['vertical_alignment']:.1%}")
+
         if person['distance_cm'] is not None:
             dist_str = f"{person['distance_cm']/100:.2f}m" if person['distance_cm'] >= 100 else f"{person['distance_cm']:.0f}cm"
 
-            # Show if half-body detection was used
-            if person['occlusion']['occlusion_type'] in ['lower_body', 'upper_body']:
-                print(f"  Calculated distance: {dist_str} (using half-body height: 90cm)")
+            # Show which height was used for calculation
+            if person['height_source'] == 'sitting_fixed':
+                print(f"  Calculated distance: {dist_str} (using sitting height: {person['effective_height']:.0f}cm)")
+            elif person['height_source'] in ['lower_body_only', 'upper_body_only']:
+                print(f"  Calculated distance: {dist_str} (using half-body height: {person['effective_height']:.0f}cm)")
             else:
-                print(f"  Calculated distance: {dist_str}")
+                print(f"  Calculated distance: {dist_str} (using full height: {person['effective_height']:.0f}cm)")
 
             if person['border'].get('too_close', False):
                 adj_dist_str = f"{person['adjusted_distance_cm']/100:.2f}m" if person['adjusted_distance_cm'] >= 100 else f"{person['adjusted_distance_cm']:.0f}cm"
@@ -537,8 +748,12 @@ def run_image(args, pose_detector, focal_length):
         print()
 
     # Save result
-    cv2.imwrite(args.output, output)
-    print(f"Saved result to: {args.output}\n")
+    import os
+    os.makedirs("./output", exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_path = f"./output/{timestamp}.jpg"
+    cv2.imwrite(output_path, output)
+    print(f"Saved result to: {output_path}\n")
 
     # Display
     if not args.no_show:
@@ -633,6 +848,10 @@ def run_video_stream(args, cap, source_name, pose_detector, focal_length):
             occluded_count = sum(1 for p in person_detections if p['occlusion']['is_occluded'])
             border_count = sum(1 for p in person_detections if p['border']['on_border'])
             too_close_count = sum(1 for p in person_detections if p['border'].get('too_close', False))
+            standing_count = sum(1 for p in person_detections
+                               if p['posture']['is_standing'] and p['posture']['confidence'] > 0.5)
+            sitting_count = sum(1 for p in person_detections
+                              if not p['posture']['is_standing'] and p['posture']['confidence'] > 0.5)
 
             # Draw HUD
             hud_y = 30
@@ -646,11 +865,14 @@ def run_video_stream(args, cap, source_name, pose_detector, focal_length):
             elif border_count > 0:
                 cv2.putText(output, f"Very Close: {border_count}/{person_count}",
                            (10, hud_y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 100, 255), 2, cv2.LINE_AA)
+            elif sitting_count > 0:
+                cv2.putText(output, f"Standing: {standing_count} | Sitting: {sitting_count}",
+                           (10, hud_y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 165, 0), 2, cv2.LINE_AA)
             elif occluded_count > 0:
                 cv2.putText(output, f"Occluded: {occluded_count}/{person_count}",
                            (10, hud_y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 165, 255), 2, cv2.LINE_AA)
             else:
-                cv2.putText(output, f"Focal: {current_focal_length:.1f}px",
+                cv2.putText(output, f"Standing: {standing_count} | Focal: {current_focal_length:.1f}px",
                            (10, hud_y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2, cv2.LINE_AA)
 
             # Write video frame
