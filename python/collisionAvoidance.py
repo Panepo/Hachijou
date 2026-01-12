@@ -54,8 +54,8 @@ class CollisionAvoidance:
                 conf_threshold=0.5,
                 input_size=(384, 384)
             )
-            # Floor class IDs in COCO-Stuff 134: 'floor-wood' (87), 'floor-other-merged' (122)
-            self.floor_class_ids = [87, 122]  # floor-wood, floor-other-merged
+            # Floor and ceiling class IDs in COCO-Stuff 134: 'floor-wood' (87), 'floor-other-merged' (122), 'ceiling-merged' (125)
+            self.floor_class_ids = [87, 122, 125]  # floor-wood, floor-other-merged, ceiling-merged
             print(f"Floor detection enabled. Floor classes: {self.floor_class_ids}")
 
         self.collision_threshold = collision_threshold
