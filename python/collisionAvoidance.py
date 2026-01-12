@@ -279,6 +279,12 @@ class CollisionAvoidance:
         # Step 1: Detect camera motion
         is_moving, avg_motion, max_motion, motion_vis = self.detect_motion(frame)
 
+        # Adjust collision threshold based on motion value
+        if 0.5 <= avg_motion <= 2.0:
+            self.collision_threshold = 3.0
+        elif avg_motion > 2.0:
+            self.collision_threshold = 2.0
+
         # Initialize default values
         has_collision = False
         collision_percentage = 0.0
